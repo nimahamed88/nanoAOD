@@ -1,0 +1,220 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "buried-illinois",
+   "metadata": {},
+   "source": [
+    "# Generator level analysis from NanoAOD\n",
+    "\n",
+    "This notebook performs a generator level selection of 3 lepton + 4 jet event candidates which can be used for the search for double parton scattering production of $t\\bar{t}+J/\\Psi$.\n",
+    "It is assumed that the $t\\bar{t}$ decays in a $(Wb)(Wb)\\rightarrow (\\ell\\nu b)(jj'b)$ final state and that the $J/\\Psi$ decays in a $\\ell\\ell$ final state.\n",
+    "\n",
+    "The events are skimmed by requiring either a trigger lepton (from the W decay) or two leptons with an invariant mass compatible with a $J/\\Psi$ decay."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0bd0f303",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import ROOT\n",
+    "import numpy as np\n",
+    "import pandas as pd"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "sudden-accreditation",
+   "metadata": {
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "%%time\n",
+    "\n",
+    "def runSelectionOn(infile='/eos/cms/store/cmst3/group/top/ttbarjpsi/ggpsi1g/ggpsi1g_NANOGEN.root',\n",
+    "                   outfile='genlevel.root'):\n",
+    "    \n",
+    "    \"\"\"\n",
+    "    runs a simple selection on a NanoGEN file and saves a snapshot of the event\n",
+    "    the selection makes use of RDataFrames and additional functions coded in selection_helpers.h\n",
+    "    \"\"\"\n",
+    "\n",
+    "    ROOT.gInterpreter.Declare('#include \"selection_helpers.h\"')\n",
+    "    \n",
+    "    ROOT.ROOT.EnableImplicitMT()\n",
+    "    rdf = ROOT.RDataFrame('Events',infile)\n",
+    "\n",
+    "    #lepton selection: select in the kinematics region of interest\n",
+    "    rdf = rdf.Define('genlep', 'GenPart_status==1 && GenPart_pt>1 && abs(GenPart_eta)<2.4 && (abs(GenPart_pdgId)==11 || abs(GenPart_pdgId)==13)') \\\n",
+    "             .Define('n_genlep', 'Sum(genlep)') \\\n",
+    "             .Filter('n_genlep>0')\n",
+    "    for c in ['pdgId','pt','eta','phi']:\n",
+    "        rdf = rdf.Define(f'GenLep_{c}',f'GenPart_{c}[genlep]')\n",
+    "\n",
+    "    #count trigger lepton candidates (high pT)\n",
+    "    rdf = rdf.Define('gentriglep','GenLep_pt>20') \\\n",
+    "             .Define('n_gentriglep', 'Sum(gentriglep)')\n",
+    "        \n",
+    "    #count dileptons in the J/Psi and Z mass regions\n",
+    "    rdf = rdf.Define('genjpsicands', ' dileptonCands(GenLep_pdgId,GenLep_pt,GenLep_eta,GenLep_phi,3.096,1.2)') \\\n",
+    "             .Define('n_genjpsicands', 'Sum(genjpsicands)') \\\n",
+    "             .Define('genzcands', 'dileptonCands(GenLep_pdgId[gentriglep],GenLep_pt[gentriglep],GenLep_eta[gentriglep],GenLep_phi[gentriglep],91.,15.)') \\\n",
+    "             .Define('n_genzcands', 'Sum(genzcands)')\n",
+    "   \n",
+    "    #filter: 1 trigger or 1 J/Psi lepton but no Z candidate\n",
+    "    rdf = rdf.Filter('(n_gentriglep>0 || n_genjpsicands>0) && n_genzcands==0')\n",
+    "    \n",
+    "    #save information on trigger lepton\n",
+    "    rdf = rdf.Define('TrigLepton_pdgId','n_gentriglep>0 ? GenLep_pdgId[gentriglep][0] : 0') \\\n",
+    "             .Define('TrigLepton_pt',   'n_gentriglep>0 ? GenLep_pt[gentriglep][0]: 0') \\\n",
+    "             .Define('TrigLepton_eta',  'n_gentriglep>0 ? GenLep_eta[gentriglep][0]: 0') \\\n",
+    "             .Define('TrigLepton_phi',  'n_gentriglep>0 ? GenLep_phi[gentriglep][0]: 0')\n",
+    "    \n",
+    "    #save information on J/Psi leptons\n",
+    "    for i in range(2):\n",
+    "        rdf = rdf.Define(f'JPsiLepton_{i+1}_pdgId',f'n_genjpsicands>0 ? GenLep_pdgId[genjpsicands][{i}] : 0') \\\n",
+    "                 .Define(f'JPsiLepton_{i+1}_pt',   f'n_genjpsicands>0 ? GenLep_pt[genjpsicands][{i}] : 0') \\\n",
+    "                 .Define(f'JPsiLepton_{i+1}_eta',  f'n_genjpsicands>0 ? GenLep_eta[genjpsicands][{i}] : 0') \\\n",
+    "                 .Define(f'JPsiLepton_{i+1}_phi',  f'n_genjpsicands>0 ? GenLep_phi[genjpsicands][{i}] : 0')\n",
+    "\n",
+    "    #save kinematics of the J/Psi    \n",
+    "    rdf = rdf.Define('JPsi_mass','n_genjpsicands > 0 ? kinematics2l(JPsiLepton_1_pdgId,JPsiLepton_1_pt,JPsiLepton_1_eta,JPsiLepton_1_phi,JPsiLepton_2_pdgId,JPsiLepton_2_pt,JPsiLepton_2_eta,JPsiLepton_2_phi,\"mass\") : 0') \\\n",
+    "             .Define('JPsi_pt','n_genjpsicands > 0 ? kinematics2l(JPsiLepton_1_pdgId,JPsiLepton_1_pt,JPsiLepton_1_eta,JPsiLepton_1_phi,JPsiLepton_2_pdgId,JPsiLepton_2_pt,JPsiLepton_2_eta,JPsiLepton_2_phi,\"pt\") : 0') \\\n",
+    "             .Define('JPsi_eta','n_genjpsicands > 0 ? kinematics2l(JPsiLepton_1_pdgId,JPsiLepton_1_pt,JPsiLepton_1_eta,JPsiLepton_1_phi,JPsiLepton_2_pdgId,JPsiLepton_2_pt,JPsiLepton_2_eta,JPsiLepton_2_phi,\"eta\") : 0') \\\n",
+    "             .Define('JPsi_phi','n_genjpsicands > 0 ? kinematics2l(JPsiLepton_1_pdgId,JPsiLepton_1_pt,JPsiLepton_1_eta,JPsiLepton_1_phi,JPsiLepton_2_pdgId,JPsiLepton_2_pt,JPsiLepton_2_eta,JPsiLepton_2_phi,\"phi\") : 0')\n",
+    "            \n",
+    "    #jet selection\n",
+    "    rdf = rdf.Define('genjet', 'GenJet_pt>30 && abs(GenJet_eta)<2.4 && crossClean(GenJet_eta,GenJet_phi,GenLep_eta[gentriglep],GenLep_phi[gentriglep])') \\\n",
+    "             .Define('n_genjet', 'Sum(genjet)')\n",
+    "    \n",
+    "    #save the selection\n",
+    "    columns=['n_genlep','n_gentriglep','n_genjpsicands']\n",
+    "    columns+=['TrigLepton_pdgId','TrigLepton_pt','TrigLepton_eta','TrigLepton_phi']\n",
+    "    for i in range(1,3):\n",
+    "        columns+=[f'JPsiLepton_{i}_pdgId',f'JPsiLepton_{i}_pt',f'JPsiLepton_{i}_eta',f'JPsiLepton_{i}_phi']\n",
+    "    columns+=['JPsi_pt','JPsi_eta','JPsi_phi','JPsi_mass']\n",
+    "    rdf.Snapshot('Events',outfile,columns)\n",
+    "    ROOT.ROOT.DisableImplicitMT()\n",
+    "\n",
+    "runSelectionOn()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "7c6d6027",
+   "metadata": {},
+   "source": [
+    "We open the snapshot as a pandas DataFrame to inspect it's contents"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d5f84106",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#open as a pandas dataframe\n",
+    "rdf=ROOT.RDataFrame('Events','genlevel.root')\n",
+    "df=pd.DataFrame(rdf.AsNumpy())\n",
+    "print(f'Read {df.shape[0]} events. Columns available are={list(df.columns)}')\n",
+    "df.describe()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "fa1a2902",
+   "metadata": {},
+   "source": [
+    "We make a simple mass distribution of the $J/\\Psi$ candidates mass"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "38ef32ec",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from helpers import *\n",
+    "\n",
+    "dfleading=df[['JPsiLepton_1_pt','JPsiLepton_1_eta']].rename(\n",
+    "    columns={'JPsiLepton_1_pt':'JPsiLepton_pt','JPsiLepton_1_eta':'JPsiLepton_eta'}\n",
+    ")\n",
+    "dfleading['JPsiLepton_abseta']=np.abs(dfleading['JPsiLepton_eta'])\n",
+    "\n",
+    "dfsubleading=df[['JPsiLepton_2_pt','JPsiLepton_2_eta']].rename(\n",
+    "    columns={'JPsiLepton_2_pt':'JPsiLepton_pt','JPsiLepton_2_eta':'JPsiLepton_eta'}\n",
+    ")\n",
+    "dfsubleading['JPsiLepton_abseta']=np.abs(dfsubleading['JPsiLepton_eta'])\n",
+    "\n",
+    "\n",
+    "dflist=[(dfleading,None,'Leading'),(dfsubleading,None,'Sub-leading')]\n",
+    "for v,vtitle,bins in [\n",
+    "    ('JPsiLepton_pt', rf'Lepton $p_{{T}}$ [GeV]',np.linspace(0,10,100)),\n",
+    "    ('JPsiLepton_abseta', rf'Lepton pseudo-rapidity',np.linspace(0,2.5,100)),\n",
+    "        \n",
+    "]:\n",
+    "    inspectDistribution(dflist,v,vtitle,bins)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9f30b932",
+   "metadata": {},
+   "source": [
+    "NanoAODs available so far:\n",
+    "\n",
+    "* ggpsi1g : /eos/cms/store/cmst3/group/top/ttbarjpsi/ggpsi1g/\n",
+    "* ttbar : /eos/cms/store/cmst3/group/top/ttbarjpsi/TTTo2J1L1Nu_CP5_13p6TeV_powheg-pythia8/ (several files)\n",
+    "* x3s18ttbar_HO : /eos/cms/store/cmst3/group/top/ttbarjpsi/gg_ccx3s18ttbar_HO/gg_ccx3s18ttbar_HO_NANOGEN.root"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3de338f5",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "@webio": {
+   "lastCommId": null,
+   "lastKernelId": null
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.9.12"
+  },
+  "sparkconnect": {
+   "bundled_options": [
+    "LongRunningAnalysis",
+    "Spark3Shuffle",
+    "MemoryIntensive"
+   ],
+   "list_of_options": []
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

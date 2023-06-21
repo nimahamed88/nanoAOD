@@ -1,0 +1,197 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "0a69d42c",
+   "metadata": {},
+   "source": [
+    "# LHE event mixer"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "0bd0f303",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Welcome to JupyROOT 6.24/00\n"
+     ]
+    }
+   ],
+   "source": [
+    "import ROOT\n",
+    "import numpy as np\n",
+    "import pandas as pd"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "buried-illinois",
+   "metadata": {},
+   "source": [
+    "Select particles of interest at LHE level from two different samples and mix them"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "sudden-accreditation",
+   "metadata": {
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "%%time\n",
+    "\n",
+    "def runSelectionOn(infile='/eos/cms/store/cmst3/group/top/ttbarjpsi/ggpsi1g/ggpsi1g_NANOGEN.root',\n",
+    "                   outfile='genlevel.root',\n",
+    "                   pdgIdList=[24,-24,5,-5]):\n",
+    "    \n",
+    "    \"\"\"\n",
+    "    runs a simple selection on the LHE particle collection in NanoGEN\n",
+    "    \"\"\"\n",
+    "    \n",
+    "    ROOT.ROOT.EnableImplicitMT()\n",
+    "    rdf = ROOT.RDataFrame('Events',infile)\n",
+    "\n",
+    "    #select particles of interest\n",
+    "    sel='||'.join([f'LHEPart_pdgId=={p}' for p in pdgIdList])\n",
+    "    rdf = rdf.Define('good_particle', sel) \\\n",
+    "             .Define('n','Sum(good_particle)')\n",
+    "    columns=['pt','eta','phi','mass','spin','pdgId']\n",
+    "    for c in columns:\n",
+    "        rdf=rdf.Define(c,f'LHEPart_{c}[good_particle]')\n",
+    "\n",
+    "    #save selection\n",
+    "    rdf.Snapshot('Events',outfile,columns)\n",
+    "    ROOT.ROOT.DisableImplicitMT()\n",
+    "\n",
+    "#run on the j/psi and ttbar samples and save the particles of interest in a smaller tree\n",
+    "runSelectionOn('/eos/cms/store/cmst3/group/top/ttbarjpsi/ggpsi1g/ggpsi1g_NANOGEN.root',\n",
+    "               'lhe_ggpsi1g.root',\n",
+    "               pdgIdList=[13,-13])\n",
+    "runSelectionOn(' /eos/cms/store/cmst3/group/top/ttbarjpsi/TTTo2J1L1Nu_CP5_13p6TeV_powheg-pythia8/TTTo2J1L1Nu_CP5_13p6TeV_powheg-pythia8_NANOGEN_10.root',\n",
+    "               'lhe_ttbar.root',\n",
+    "               pdgIdList=[24,-24,5,-5])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b996e980",
+   "metadata": {},
+   "source": [
+    "Mix events (start from here if ROOT files are already available)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "797012bb",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import ROOT\n",
+    "from array import array\n",
+    "\n",
+    "d1=ROOT.TChain('Events')\n",
+    "d1.AddFile('lhe_ggpsi1g.root')\n",
+    "d2=ROOT.TChain('Events')\n",
+    "d2.AddFile('lhe_ttbar.root')\n",
+    "n1=d1.GetEntries()\n",
+    "n2=d2.GetEntries()\n",
+    "columns=[c.GetName() for c in d1.GetListOfBranches()]\n",
+    "print(f'Read trees with {n1} and {n2} entries')\n",
+    "print(f'Columns available are {columns}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3de338f5",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%%time\n",
+    "\n",
+    "#prepare the output tree and file\n",
+    "file = ROOT.TFile(\"mixed_events.root\", 'recreate')\n",
+    "tree = ROOT.TTree(\"Events\",'Events')\n",
+    "\n",
+    "#define the branches in the output tree\n",
+    "n = array( 'i', [ 0 ] )\n",
+    "tree.Branch( 'n', n, 'n/I' )\n",
+    "nmax=20\n",
+    "branches={}\n",
+    "for c in columns:\n",
+    "    branches[c] = array( 'd', nmax*[0.])\n",
+    "    tree.Branch(c,branches[c],f'{c}[n]/D' )\n",
+    "\n",
+    "#iterate over the events and fill them\n",
+    "for i in range(n1):\n",
+    "    \n",
+    "    d1.GetEntry(i)\n",
+    "    j=np.random.randint(0,n2)\n",
+    "    d2.GetEntry(j)\n",
+    "    \n",
+    "    #join the values corresponding to the same columns\n",
+    "    for c in columns:\n",
+    "        vals= [v for v in getattr(d1,c)] + [v for v in getattr(d2,c)]\n",
+    "        n[0]=int(len(vals))\n",
+    "        for i,v in enumerate(vals):\n",
+    "            branches[c][i]=v\n",
+    "            \n",
+    "    #fill the tree\n",
+    "    tree.Fill()\n",
+    "\n",
+    "print(f'Filled tree with {tree.GetEntriesFast()} entries')\n",
+    "tree.Write()\n",
+    "file.Close()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "bcb6f580",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "@webio": {
+   "lastCommId": null,
+   "lastKernelId": null
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.6"
+  },
+  "sparkconnect": {
+   "bundled_options": [
+    "LongRunningAnalysis",
+    "Spark3Shuffle",
+    "MemoryIntensive"
+   ],
+   "list_of_options": []
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
