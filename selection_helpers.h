@@ -81,9 +81,9 @@ float kinematics2l(const int &pdgId1, const float &pt1, const float &eta1, const
     float m2 = abs(pdgId2)==11 ? 0.000511 : 0.105658;
     ROOT::Math::PtEtaPhiMVector p1(pt1, eta1, phi1, m1);
     ROOT::Math::PtEtaPhiMVector p2(pt2, eta2, phi2, m2);
-    if(kin=="pt") (p1+p2).Pt();
-    if(kin=="eta") (p1+p2).Eta();
-    if(kin=="phi") (p1+p2).Phi();
+    if(kin=="pt") return(p1+p2).Pt();
+    if(kin=="eta") return (p1+p2).Eta();
+    if(kin=="phi") return (p1+p2).Phi();
     return (p1+p2).M();
 }
 
